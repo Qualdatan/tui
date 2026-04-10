@@ -60,6 +60,25 @@ def _confirm(prompt: str) -> bool:
             return False
 
 
+def pick_companies() -> list[str]:
+    """Interaktive Mehrfachauswahl von Companies aus COMPANIES_DIR.
+
+    Leere Liste wenn keine Companies gefunden werden — der Aufrufer
+    entscheidet, wie darauf zu reagieren ist.
+    """
+    from .company_scanner import list_companies
+    from .config import COMPANIES_DIR
+
+    available = list_companies()
+    if not available:
+        print(f"\nKeine Companies in {COMPANIES_DIR} gefunden.")
+        return []
+    return _pick_multiple(
+        "Welche Companies sollen analysiert werden?",
+        available,
+    )
+
+
 def check_interrupted_runs() -> dict | None:
     """Prueft auf unterbrochene Runs und bietet Wiederaufnahme an."""
     interrupted = find_interrupted_runs()
@@ -146,7 +165,7 @@ def interactive_setup() -> dict:
     # 2. Methode (Recipe) auswaehlen
     recipes = list_recipes()
     if not recipes:
-        print(f"\nKeine Recipes gefunden. Bitte pruefe den Ordner 'recipes/'.")
+        print(f"\nKeine Methoden gefunden. Bitte pruefe den Ordner 'methods/' (oder METHODS_DIR in .env).")
         sys.exit(1)
 
     recipe_names = [f"{r['id']} – {r['name']}" for r in recipes]
