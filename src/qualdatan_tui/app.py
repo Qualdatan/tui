@@ -740,7 +740,7 @@ def cmd_company(args):
     # 4. Triangulator updaten
     if not args.no_triangulate:
         try:
-            from src.triangulator import update_from_run
+            from qualdatan_core.triangulation import update_from_run
             stats = update_from_run(ctx.run_dir, mode="company")
             print(f"\nTriangulations-DB aktualisiert: {stats}")
         except Exception as e:
@@ -774,7 +774,7 @@ def cmd_company(args):
 
 def cmd_triangulate(args):
     """Aktualisiert/rebuildet die persistente Triangulations-DB."""
-    from src.triangulator import (
+    from qualdatan_core.triangulation import (
         update_from_run, rebuild_from_all_runs, list_run_dirs,
     )
 
