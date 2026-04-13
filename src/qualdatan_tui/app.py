@@ -84,7 +84,7 @@ def _apply_coding_strategy_override(recipe, coding_strategy: str | None):
 def load_existing_result(ctx: RunContext):
     """Laedt vorhandene Ergebnisse und liest Dokument-Texte nach."""
     from qualdatan_core.models import AnalysisResult
-    from qualdatan_core.step1_analyze import read_transcripts
+    from qualdatan_core.steps.step1_analyze import read_transcripts
 
     if not ctx.analysis_json.exists():
         print(f"FEHLER: {ctx.analysis_json} nicht gefunden.")
@@ -101,9 +101,9 @@ def run_export_steps(result, ctx: RunContext,
                      codebase_codes: dict | None = None,
                      codebase_name: str | None = None):
     """Fuehrt Schritte 2-4 aus."""
-    from qualdatan_core.step2_codebook import generate_codebook
-    from qualdatan_core.step3_qdpx import generate_qdpx
-    from qualdatan_core.step4_evaluation import generate_evaluation
+    from qualdatan_core.steps.step2_codebook import generate_codebook
+    from qualdatan_core.steps.step3_qdpx import generate_qdpx
+    from qualdatan_core.steps.step4_evaluation import generate_evaluation
 
     if not ctx.is_step_done(2):
         print("\n>>> Schritt 2: Codebook generieren")
@@ -145,10 +145,10 @@ def run_transcripts_pipeline(ctx: RunContext, recipe_id: str,
                              transcripts_dir: Path | None = None,
                              qdpx_path: Path | None = None):
     """Fuehrt die klassische Interview-Pipeline mit einem RunContext aus."""
-    from qualdatan_core.step1_analyze import run_analysis
-    from qualdatan_core.step2_codebook import generate_codebook
-    from qualdatan_core.step3_qdpx import generate_qdpx
-    from qualdatan_core.step4_evaluation import generate_evaluation
+    from qualdatan_core.steps.step1_analyze import run_analysis
+    from qualdatan_core.steps.step2_codebook import generate_codebook
+    from qualdatan_core.steps.step3_qdpx import generate_qdpx
+    from qualdatan_core.steps.step4_evaluation import generate_evaluation
 
     recipe = load_recipe(recipe_id)
     recipe = _apply_coding_strategy_override(recipe, coding_strategy)
@@ -267,7 +267,7 @@ def run_interactive():
         return
 
     if "Company" in choice:
-        from src.company_scanner import list_companies
+        from qualdatan_core.layouts import list_companies
         if COMPANIES_DIR.exists() and list_companies():
             companies = pick_companies()
             if not companies:
@@ -409,8 +409,8 @@ def _run_interview_flow_for_company(ctx, company, company_id: int,
     unterstuetzt das bereits. Das QDPX wird unter
     ``<run>/<company>/qda/interviews.qdpx`` abgelegt.
     """
-    from qualdatan_core.step1_analyze import run_analysis
-    from qualdatan_core.step3_qdpx import generate_qdpx
+    from qualdatan_core.steps.step1_analyze import run_analysis
+    from qualdatan_core.steps.step3_qdpx import generate_qdpx
 
     if not company.interviews:
         return
@@ -477,7 +477,7 @@ def _run_pdf_flow_for_source(ctx, company, source_path: Path, source_label: str,
     Registrieren der PDFs in der DB gesetzt.
     """
     from src import pdf_coder as _pdf_coder_module
-    from qualdatan_core.pdf_scanner import scan_projects, filter_pdfs, build_manifest
+    from qualdatan_core.pdf.scanner import scan_projects, filter_pdfs, build_manifest
 
     recipe_id = args.recipe_documents or DEFAULT_DOCUMENTS_RECIPE
 
@@ -571,7 +571,7 @@ def _run_pdf_flow_for_source(ctx, company, source_path: Path, source_label: str,
     text_pdfs = pdfs
     visual_pdfs = []
     if classifications:
-        from qualdatan_core.pdf_classifier import split_by_type
+        from qualdatan_core.coding.classifier import split_by_type
         groups = split_by_type(pdfs, classifications)
         text_pdfs = groups.get("text", []) + groups.get("mixed", [])
         visual_pdfs = groups.get("plan", []) + groups.get("photo", [])
@@ -633,7 +633,7 @@ def _run_pdf_flow_for_source(ctx, company, source_path: Path, source_label: str,
 
 def cmd_company(args):
     """Company-Orchestrator: Interviews + Projektdokumente trianguliert."""
-    from src.company_scanner import list_companies, scan_company
+    from qualdatan_core.layouts import list_companies, scan_company
 
     # 1. Auswahl
     if args.all:
@@ -854,9 +854,9 @@ def cmd_curate(args):
       4. ``bootstrap_codebook`` zieht Codes + Seed zusammen und schreibt YAML.
       5. CLI gibt Stats + naechste Schritte aus.
     """
-    from src.company_scanner import scan_company, list_companies
+    from qualdatan_core.layouts import scan_company, list_companies
     from src.codebook_curation import bootstrap_codebook
-    from qualdatan_core.step1_analyze import run_analysis
+    from qualdatan_core.steps.step1_analyze import run_analysis
 
     # 1. Company auswaehlen
     if args.company:
@@ -1067,12 +1067,20 @@ def cmd_resume(args):
 
 def cmd_testrun(args):
     """Fuehrt einen vordefinierten Testrun aus."""
+    if list_profiles is None:
+        print_error(
+            "Testrun-Profile sind in dieser Installation nicht verfuegbar. "
+            "In Phase B.x werden sie als Bundle-Fixtures bereitgestellt; "
+            "bis dahin muss src/testruns.py auf PYTHONPATH liegen."
+        )
+        sys.exit(2)
+
     from qualdatan_tui.console import _pick, pick_recipe, pick_recipe_pair, pick_codebook
 
     with spinner("Pipeline-Module laden...", phase="scan"):
         from src import pdf_coder as _pdf_coder_module
-        from qualdatan_core.pdf_scanner import build_manifest, save_manifest, print_manifest_summary
-        from qualdatan_core.pdf_classifier import split_by_type
+        from qualdatan_core.pdf.scanner import build_manifest, save_manifest, print_manifest_summary
+        from qualdatan_core.coding.classifier import split_by_type
 
     # ---- 1. Profil waehlen ----
     if args.profile:
@@ -1221,8 +1229,8 @@ def cmd_testrun(args):
     #          QDPX-Export ist ausschliesslich fuer Interviews.
     qdpx_target = None
     if profile.selected_interviews:
-        from qualdatan_core.step1_analyze import run_analysis
-        from qualdatan_core.step3_qdpx import generate_qdpx
+        from qualdatan_core.steps.step1_analyze import run_analysis
+        from qualdatan_core.steps.step3_qdpx import generate_qdpx
         from qualdatan_core.config import COMPANIES_DIR
 
         print_step(
