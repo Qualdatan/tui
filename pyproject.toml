@@ -19,7 +19,6 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Environment :: Console",
     "Topic :: Scientific/Engineering",
-    "License :: OSI Approved :: GNU Affero General Public License v3",
 ]
 
 dependencies = [
