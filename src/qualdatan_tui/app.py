@@ -651,8 +651,26 @@ def cmd_company(args):
     recipe_documents = args.recipe_documents or DEFAULT_DOCUMENTS_RECIPE
     recipe_interviews = args.recipe_interviews or DEFAULT_INTERVIEW_RECIPE
 
-    # 2. Run anlegen
-    ctx = create_run()
+    # 2. Run anlegen (optional mit App-DB-Anbindung via --app-db)
+    app_db = None
+    if getattr(args, "app_db", None):
+        from qualdatan_core.app_db import open_app_db
+        app_db = open_app_db(args.app_db)
+        # Projektname: erste Company (oder kombinierter Label)
+        project_name = companies[0] if len(companies) == 1 else ",".join(companies)
+        ctx = create_run(
+            app_db=app_db,
+            project_name=project_name,
+            config={
+                "mode": "company",
+                "companies": companies,
+                "recipe_interviews": recipe_interviews,
+                "recipe_documents": recipe_documents,
+                "codebase": args.codebase,
+            },
+        )
+    else:
+        ctx = create_run()
     ctx.init_state(
         mode="company",
         recipe_id=recipe_documents,
@@ -763,6 +781,11 @@ def cmd_company(args):
         print(f"\nWARN: Pivot-Export fehlgeschlagen: {e}")
 
     ctx.mark_completed()
+    if app_db is not None:
+        try:
+            app_db.close()
+        except Exception:
+            pass
     print("\n" + "=" * 60)
     print(f"  Fertig: {ctx.run_dir}")
     print("=" * 60)
@@ -1569,6 +1592,13 @@ def build_parser() -> argparse.ArgumentParser:
                      help="docx/xlsx NICHT zu PDF konvertieren")
     p_c.add_argument("--no-triangulate", action="store_true",
                      help="Triangulations-DB nach Lauf nicht aktualisieren")
+    p_c.add_argument(
+        "--app-db", default=None,
+        help=(
+            "Pfad zur App-DB. Wenn gesetzt, wird der Run dort katalogisiert "
+            "und Materials werden gespiegelt (D.3)."
+        ),
+    )
     p_c.set_defaults(func=cmd_company)
 
     # --- curate (Phase 4) ------------------------------------------------
