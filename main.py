@@ -2,12 +2,14 @@
 """
 Simple BIM — Qualitative Analyse-Pipeline.
 
-Subcommand-Struktur (Phase 3):
+Usage:
 
-    python main.py                          # interaktiv (Legacy Transcripts oder Companies)
+    python main.py                          # interaktiver Modus (farbiges CLI)
     python main.py transcripts [--recipe mayring] [--codebase X] [...]
     python main.py documents   [--project HKS] [--recipe pdf_analyse] [...]
     python main.py company     [HKS] [PBN] [--all] [--codebase X] [...]
+    python main.py testrun     [boe|company|plans]    # vordefinierte Testruns
+    python main.py curate      [--company HKS] [--from interviews|documents]
     python main.py triangulate [--company HKS] [--rebuild] [--run-dir PATH]
     python main.py resume
 
@@ -29,22 +31,21 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 # ruff: noqa: E402 — sys.path.insert muss VOR allen src.*-Imports stehen,
 # damit das Package aus /mnt/d/ai/transcript importierbar ist.
+#
+# Nur leichtgewichtige Imports auf Top-Level — schwere Module (anthropic,
+# openpyxl, pymupdf) werden erst in den jeweiligen cmd_*-Funktionen geladen.
 from src.config import (
     TRANSCRIPTS_DIR, COMPANIES_DIR, DEFAULT_RECIPE,
 )
-from src.models import AnalysisResult
 from src.recipe import load_recipe, load_codebase, CODING_STRATEGIES
-from src.step1_analyze import run_analysis, read_transcripts
-from src.step2_codebook import generate_codebook
-from src.step3_qdpx import generate_qdpx
-from src.step4_evaluation import generate_evaluation
 from src.run_context import (
     RunContext, create_run, find_interrupted_runs, resume_run,
 )
-
-# pdf_coder wird importierbar genutzt (nicht via CLI-Entry-Point)
-import pdf_coder as _pdf_coder_module
-from pdf_coder import run_pipeline as run_pdf_pipeline
+from src.cli import (
+    console, print_header, print_step, print_success, print_warning,
+    print_error, print_summary, spinner,
+)
+from src.testruns import list_profiles, get_profile, build_pdf_list as build_testrun_pdfs
 
 
 # ---------------------------------------------------------------------------
@@ -72,8 +73,11 @@ def _apply_coding_strategy_override(recipe, coding_strategy: str | None):
     return dataclasses.replace(recipe, coding_strategy=coding_strategy)
 
 
-def load_existing_result(ctx: RunContext) -> AnalysisResult:
+def load_existing_result(ctx: RunContext):
     """Laedt vorhandene Ergebnisse und liest Dokument-Texte nach."""
+    from src.models import AnalysisResult
+    from src.step1_analyze import read_transcripts
+
     if not ctx.analysis_json.exists():
         print(f"FEHLER: {ctx.analysis_json} nicht gefunden.")
         print("Bitte erst Schritt 1 ausfuehren.")
@@ -84,9 +88,13 @@ def load_existing_result(ctx: RunContext) -> AnalysisResult:
     return result
 
 
-def run_export_steps(result: AnalysisResult, ctx: RunContext,
+def run_export_steps(result, ctx: RunContext,
                      qdpx_path: Path | None = None):
     """Fuehrt Schritte 2-4 aus."""
+    from src.step2_codebook import generate_codebook
+    from src.step3_qdpx import generate_qdpx
+    from src.step4_evaluation import generate_evaluation
+
     if not ctx.is_step_done(2):
         print("\n>>> Schritt 2: Codebook generieren")
         generate_codebook(result, ctx.codebook_xlsx)
@@ -123,6 +131,11 @@ def run_transcripts_pipeline(ctx: RunContext, recipe_id: str,
                              transcripts_dir: Path | None = None,
                              qdpx_path: Path | None = None):
     """Fuehrt die klassische Interview-Pipeline mit einem RunContext aus."""
+    from src.step1_analyze import run_analysis
+    from src.step2_codebook import generate_codebook
+    from src.step3_qdpx import generate_qdpx
+    from src.step4_evaluation import generate_evaluation
+
     recipe = load_recipe(recipe_id)
     recipe = _apply_coding_strategy_override(recipe, coding_strategy)
 
@@ -183,52 +196,100 @@ def run_transcripts_pipeline(ctx: RunContext, recipe_id: str,
 # ---------------------------------------------------------------------------
 
 def run_interactive():
-    """Interaktiver Modus mit CLI-Auswahl."""
-    from src.cli import interactive_setup
-    from src.company_scanner import list_companies
+    """Interaktiver Modus mit farbigem CLI."""
+    from src.cli import (
+        _pick, pick_companies, pick_recipe, pick_recipe_pair, pick_codebook,
+        check_interrupted_runs, _pick_multiple,
+    )
 
-    # Wenn es Companies gibt, bevorzugen wir den Company-Modus.
-    if COMPANIES_DIR.exists() and list_companies():
-        print("\n>>> Companies erkannt — Company-Modus")
-        from src.cli import pick_companies
-        companies = pick_companies()
-        if not companies:
-            print("Keine Auswahl — Abbruch.")
-            return
-        # Interactive defaults: immer alles
-        args = argparse.Namespace(
-            companies=companies,
-            all=False,
-            recipe_interviews=None,
-            recipe_documents=None,
-            codebase=None,
-            coding_strategy=None,
-            skip_plans=False,
-            skip_pattern=[],
-            no_convert_office=False,
-            no_triangulate=False,
+    print_header("Simple BIM Pipeline", "Qualitative Analyse fuer Bauprojekte")
+
+    # Unterbrochene Runs pruefen
+    resume_info = check_interrupted_runs()
+    if resume_info:
+        ctx = resume_run(resume_info["run_dir"])
+        print_success(f"Setze Run fort: {ctx.run_dir.name}")
+        run_transcripts_pipeline(
+            ctx, resume_info["recipe_id"], resume_info.get("codebase_name"),
         )
-        cmd_company(args)
         return
 
-    config = interactive_setup()
+    # Hauptmenue
+    modes = [
+        "\U0001f3e2 Company-Analyse -- Interviews + Projektdokumente trianguliert",
+        "\U0001f399\ufe0f  Interview-Analyse -- Transkripte kodieren (Mayring etc.)",
+        "\U0001f4c4 Dokument-Analyse -- PDFs analysieren und kodieren",
+        "\U0001f9ea Testrun -- Vordefinierte Testruns mit Beispieldaten",
+        "\U0001f4d6 Codebook-Curation -- Draft-Codebook aus Sample bootstrappen",
+    ]
+    choice = _pick("Was moechtest du tun?", modes)
+    if choice is None:
+        return
 
-    if config.get("resume"):
-        ctx = resume_run(config["run_dir"])
-        print(f"\n  Setze Run fort: {ctx.run_dir.name}")
-        run_transcripts_pipeline(
-            ctx, config["recipe_id"], config.get("codebase_name"),
+    if "Company" in choice:
+        from src.company_scanner import list_companies
+        if COMPANIES_DIR.exists() and list_companies():
+            companies = pick_companies()
+            if not companies:
+                print_warning("Keine Auswahl -- Abbruch.")
+                return
+            iv_recipe, doc_recipe = pick_recipe_pair()
+            codebase_name, coding_strategy = pick_codebook()
+            args = argparse.Namespace(
+                companies=companies, all=False,
+                recipe_interviews=iv_recipe, recipe_documents=doc_recipe,
+                codebase=codebase_name, coding_strategy=coding_strategy,
+                skip_plans=False, skip_pattern=[], project=[],
+                no_convert_office=False, no_triangulate=False,
+            )
+            cmd_company(args)
+        else:
+            print_warning("Keine Companies gefunden. Bitte Companies in input/companies/ anlegen.")
+
+    elif "Interview" in choice:
+        transcripts = sorted(f.name for f in TRANSCRIPTS_DIR.glob("*.docx"))
+        if not transcripts:
+            print_error(f"Keine .docx-Dateien in {TRANSCRIPTS_DIR} gefunden.")
+            return
+        selected = _pick_multiple(
+            "Welche Transkripte sollen analysiert werden?", transcripts,
         )
-    else:
+        recipe_id = pick_recipe(category="interviewanalysis", default_id="mayring")
+        codebase_name, coding_strategy = pick_codebook()
+
         ctx = create_run()
         ctx.init_state(
-            recipe_id=config["recipe_id"],
-            codebase_name=config.get("codebase_name"),
-            transcripts=config["transcripts"],
+            recipe_id=recipe_id, codebase_name=codebase_name,
+            transcripts=selected,
         )
         run_transcripts_pipeline(
-            ctx, config["recipe_id"], config.get("codebase_name"),
+            ctx, recipe_id, codebase_name=codebase_name,
+            coding_strategy=coding_strategy,
         )
+
+    elif "Dokument" in choice:
+        recipe_id = pick_recipe(category="documentanalysis", default_id="pdf_analyse")
+        codebase_name, coding_strategy = pick_codebook()
+        args = argparse.Namespace(
+            project=None, recipe=recipe_id, qdpx=None,
+            step=None, mode=None, classify_mode="local",
+            coding_strategy=coding_strategy, skip_plans=False,
+            skip_pattern=[], no_convert_office=False,
+        )
+        cmd_documents(args)
+
+    elif "Testrun" in choice:
+        args = argparse.Namespace(
+            profile=None, recipe=None, codebase=None, resume=False,
+        )
+        cmd_testrun(args)
+
+    elif "Codebook" in choice:
+        args = argparse.Namespace(
+            company=None, from_source="interviews", codebase=None,
+            sample_size=4, recipe=None, coding_strategy=None,
+        )
+        cmd_curate(args)
 
 
 # ---------------------------------------------------------------------------
@@ -262,6 +323,9 @@ def cmd_transcripts(args):
 
 def cmd_documents(args):
     """PDF-/Dokument-Analyse (delegiert an pdf_coder.run_pipeline)."""
+    with spinner("Pipeline-Module laden...", phase="scan"):
+        from src.pdf_coder import run_pipeline as run_pdf_pipeline
+
     recipe_id = args.recipe or DEFAULT_DOCUMENTS_RECIPE
     qdpx_path = Path(args.qdpx) if getattr(args, "qdpx", None) else None
 
@@ -273,13 +337,6 @@ def cmd_documents(args):
         mode="documents",
     )
 
-    # coding_strategy-Override greift auch hier, wir muessen dazu das Recipe
-    # von pdf_coder aus laden. Der einfachste Weg: wir setzen es via
-    # Monkey-Patch auf Recipe-Ebene im Loader nicht — stattdessen koennen
-    # wir das Recipe vorweg laden und dann weiterreichen, falls pdf_coder
-    # das unterstuetzt. Aktuell laed pdf_coder.run_pipeline das Recipe
-    # selbst. Fuer Phase 3 reicht: wir setzen die Strategy im State, damit
-    # Phase 4 darauf zugreifen kann.
     if args.coding_strategy:
         ctx.db.set_state("coding_strategy_override", args.coding_strategy)
 
@@ -312,7 +369,8 @@ def _run_interview_flow_for_company(ctx, company, company_id: int,
     unterstuetzt das bereits. Das QDPX wird unter
     ``<run>/<company>/qda/interviews.qdpx`` abgelegt.
     """
-    from src.company_scanner import _INTERVIEWS_DIR  # noqa: F401 (nur Dok)
+    from src.step1_analyze import run_analysis
+    from src.step3_qdpx import generate_qdpx
 
     if not company.interviews:
         return
@@ -320,7 +378,6 @@ def _run_interview_flow_for_company(ctx, company, company_id: int,
     recipe = load_recipe(recipe_id)
     recipe = _apply_coding_strategy_override(recipe, coding_strategy)
 
-    # Interview-Dateien in der DB registrieren
     for iv in company.interviews:
         ctx.db.upsert_interview_doc(
             company_id=company_id,
@@ -328,10 +385,7 @@ def _run_interview_flow_for_company(ctx, company, company_id: int,
             path=str(iv),
         )
 
-    # Fallback: wenn company.interviews alle im selben Ordner liegen,
-    # koennen wir diesen Ordner direkt an run_analysis geben.
     interview_dir = company.interviews[0].parent
-    # Sanity-Check: alle Files im selben Ordner?
     if not all(iv.parent == interview_dir for iv in company.interviews):
         print(f"  WARN: Interviews von {company.name} liegen in verschiedenen "
               f"Ordnern — nutze {interview_dir} als Basis.")
@@ -349,7 +403,6 @@ def _run_interview_flow_for_company(ctx, company, company_id: int,
         print(f"  FEHLER bei Interview-Analyse: {e}")
         return
 
-    # Export: QDPX unter company_dir/qda/interviews.qdpx
     qdpx_target = ctx.company_qdpx_path(company.name, "interviews.qdpx")
     print(f"  QDPX-Export: {qdpx_target}")
     try:
@@ -368,6 +421,7 @@ def _run_pdf_flow_for_source(ctx, company, source_path: Path, source_label: str,
     ``company_id``/``project_id``/``source_kind`` wird direkt nach dem
     Registrieren der PDFs in der DB gesetzt.
     """
+    from src import pdf_coder as _pdf_coder_module
     from src.pdf_scanner import scan_projects, filter_pdfs, build_manifest
 
     recipe_id = args.recipe_documents or DEFAULT_DOCUMENTS_RECIPE
@@ -734,6 +788,7 @@ def cmd_curate(args):
     """
     from src.company_scanner import scan_company, list_companies
     from src.codebook_curation import bootstrap_codebook
+    from src.step1_analyze import run_analysis
 
     # 1. Company auswaehlen
     if args.company:
@@ -878,12 +933,9 @@ def cmd_curate(args):
 
 
 def _run_curate_documents(ctx, company, sample_files: list[Path], recipe) -> None:
-    """Mini-Pipeline: nur Extraktion + Coding fuer ein PDF-Sample.
+    """Mini-Pipeline: nur Extraktion + Coding fuer ein PDF-Sample."""
+    from src import pdf_coder as _pdf_coder_module
 
-    Nutzt bestehende Funktionen aus ``pdf_coder`` (run_extraction,
-    run_coding). Die Ergebnisse landen in der Run-DB, ``bootstrap_codebook``
-    liest sie anschliessend raus.
-    """
     # 1. In der DB registrieren
     pdf_ids: dict[str, int] = {}
     pdfs: list[dict] = []
@@ -939,6 +991,222 @@ def cmd_resume(args):
     codebase_name = state.get("codebase_name")
     print(f"Setze Run fort: {ctx.run_dir.name}")
     run_transcripts_pipeline(ctx, recipe_id, codebase_name)
+
+
+# ---------------------------------------------------------------------------
+# cmd_testrun — vordefinierte Testruns aus src/testruns.py
+# ---------------------------------------------------------------------------
+
+def cmd_testrun(args):
+    """Fuehrt einen vordefinierten Testrun aus."""
+    from src.cli import _pick, pick_recipe, pick_recipe_pair, pick_codebook
+
+    with spinner("Pipeline-Module laden...", phase="scan"):
+        from src import pdf_coder as _pdf_coder_module
+        from src.pdf_scanner import build_manifest, save_manifest, print_manifest_summary
+        from src.pdf_classifier import split_by_type
+
+    # ---- 1. Profil waehlen ----
+    if args.profile:
+        profile_id = args.profile
+    else:
+        profiles = list_profiles()
+        options = [f"{p.id} -- {p.name}: {p.description[:60]}..." for p in profiles]
+        choice = _pick("Welches Testrun-Profil?", options)
+        if choice is None:
+            return
+        profile_id = choice.split(" -- ")[0]
+
+    try:
+        profile = get_profile(profile_id)
+    except KeyError:
+        available = ", ".join(p.id for p in list_profiles())
+        print_error(f"Profil '{profile_id}' nicht gefunden. Verfuegbar: {available}")
+        sys.exit(1)
+
+    print_header(f"Testrun: {profile.name}", profile.description)
+
+    # ---- 2. Methode (Recipe) waehlen ----
+    recipe_id = getattr(args, "recipe", None)
+    recipe_interviews_id = None
+    if not recipe_id:
+        has_interviews = bool(profile.selected_interviews)
+        has_documents = bool(profile.selected_pdfs)
+        if has_interviews and has_documents:
+            recipe_interviews_id, recipe_id = pick_recipe_pair(
+                default_interviews=profile.recipe_interviews or "mayring",
+                default_documents=profile.recipe_id,
+            )
+        elif has_interviews:
+            recipe_id = pick_recipe(
+                category="interviewanalysis",
+                default_id=profile.recipe_interviews or "mayring",
+            )
+        else:
+            recipe_id = pick_recipe(
+                category="documentanalysis",
+                default_id=profile.recipe_id,
+            )
+
+    # ---- 3. Codebook + Coding-Strategy waehlen ----
+    codebase_name = getattr(args, "codebase", None)
+    coding_strategy = None
+    codesystem = ""
+    if not codebase_name:
+        codebase_name, coding_strategy = pick_codebook()
+    if codebase_name:
+        codesystem = load_codebase(codebase_name)
+        print_success(f"Codebook: {codebase_name} ({len(codesystem)} Zeichen)")
+
+    # ---- 4. PDFs bauen ----
+    print_step("Eingabedaten laden", phase="input")
+    try:
+        pdfs = build_testrun_pdfs(profile)
+    except FileNotFoundError as e:
+        print_error(str(e))
+        sys.exit(1)
+
+    # ---- 5. Run anlegen ----
+    if args.resume:
+        interrupted = find_interrupted_runs()
+        if not interrupted:
+            print_error("Kein unterbrochener Run gefunden.")
+            sys.exit(1)
+        ctx = resume_run(interrupted[0].run_dir)
+        print_success(f"Setze Run fort: {ctx.run_dir.name}")
+    else:
+        ctx = create_run()
+        ctx.init_state(
+            recipe_id=recipe_id,
+            codebase_name=codebase_name,
+            transcripts=profile.selected_interviews,
+            mode=f"testrun_{profile.id}",
+        )
+
+    manifest = build_manifest(pdfs)
+    save_manifest(manifest, ctx.cache_dir / "manifest.json")
+    print_manifest_summary(manifest)
+
+    pdf_ids = _pdf_coder_module._register_pdfs(pdfs, ctx)
+
+    print_summary([
+        ("Run", ctx.run_dir.name),
+        ("DB", ctx.db.db_path.name),
+        ("PDFs", str(len(pdfs))),
+        ("Klassifikation", profile.classify_mode),
+        ("Methode (Dokumente)", recipe_id),
+        ("Methode (Interviews)", recipe_interviews_id or "--"),
+        ("Codebook", codebase_name or "(induktiv)"),
+        ("Coding-Strategy", coding_strategy or "recipe-default"),
+        ("Token-Budget", profile.token_budget_info),
+    ])
+
+    # ---- 6. Klassifikation ----
+    print_step("Klassifikation", profile.classify_mode, phase="scan")
+    classifications = _pdf_coder_module.run_classification(
+        pdfs, ctx, pdf_ids, classify_mode=profile.classify_mode,
+    )
+
+    # ---- 7. Aufteilen nach Typ ----
+    groups = split_by_type(pdfs, classifications)
+    text_pdfs = groups.get("text", []) + groups.get("mixed", [])
+    visual_pdfs = groups.get("plan", []) + groups.get("photo", [])
+    print_success(f"Aufgeteilt: {len(text_pdfs)} Text/Mixed, {len(visual_pdfs)} Plan/Foto")
+
+    pdf_results = []
+    visual_qdpx_results = []
+    recipe = load_recipe(recipe_id)
+    if coding_strategy:
+        import dataclasses
+        recipe = dataclasses.replace(recipe, coding_strategy=coding_strategy)
+
+    # ---- 8. Text-Pipeline ----
+    if text_pdfs:
+        print_step("Extraktion + Code-Zuweisung", f"{len(text_pdfs)} PDFs", phase="ai")
+        extractions = _pdf_coder_module.run_extraction(text_pdfs, ctx, pdf_ids)
+        pdf_results = _pdf_coder_module.run_coding(
+            text_pdfs, extractions, recipe, codesystem=codesystem,
+            ctx=ctx, pdf_ids=pdf_ids,
+        )
+        results_path = ctx.run_dir / "pdf_analysis_results.json"
+        _pdf_coder_module.save_results(pdf_results, results_path)
+
+    # ---- 9. Vision-Pipeline ----
+    if visual_pdfs and not profile.skip_visual_detail:
+        print_step("Vision-Pipeline", f"{len(visual_pdfs)} PDFs", phase="ai")
+        visual_qdpx_results = _pdf_coder_module.run_visual(
+            visual_pdfs, ctx, pdf_ids,
+            skip_detail=False,
+            max_visual_tokens=profile.max_visual_tokens,
+        )
+
+    # ---- 10. Annotation (nur fuer PDFs -- PDFs gehen NICHT in QDPX,
+    #          sondern werden manuell in MAXQDA importiert, siehe CLAUDE.md) ----
+    print_step("Annotation", "1 Farbe, Code im Comment", phase="annotate")
+    _pdf_coder_module.run_annotation(ctx, recipe=recipe)
+
+    # ---- 11. Interview-Flow (nur wenn Profil Interviews hat) ----
+    #          QDPX-Export ist ausschliesslich fuer Interviews.
+    qdpx_target = None
+    if profile.selected_interviews:
+        from src.step1_analyze import run_analysis
+        from src.step3_qdpx import generate_qdpx
+        from src.config import COMPANIES_DIR
+        import shutil
+
+        print_step(
+            "Interview-Analyse",
+            f"{len(profile.selected_interviews)} Interview(s)",
+            phase="ai",
+        )
+
+        iv_recipe_id = recipe_interviews_id or profile.recipe_interviews or "mayring"
+        iv_recipe = load_recipe(iv_recipe_id)
+        if coding_strategy:
+            import dataclasses
+            iv_recipe = dataclasses.replace(iv_recipe, coding_strategy=coding_strategy)
+
+        # Interviews aus COMPANIES_DIR/<company>/Interviews/ in den Run kopieren
+        iv_sample_dir = ctx.run_dir / "_interview_sample"
+        iv_sample_dir.mkdir(parents=True, exist_ok=True)
+        company_iv_dir = COMPANIES_DIR / (profile.company_name or "") / "Interviews"
+        missing_iv = []
+        for name in profile.selected_interviews:
+            src_path = company_iv_dir / name
+            if not src_path.exists():
+                missing_iv.append(name)
+                continue
+            dst = iv_sample_dir / name
+            if not dst.exists():
+                shutil.copy2(src_path, dst)
+        if missing_iv:
+            print_warning(f"Interviews nicht gefunden: {', '.join(missing_iv)}")
+
+        iv_result = run_analysis(iv_recipe, ctx, iv_sample_dir, codesystem)
+
+        # ---- 12. QDPX-Export (nur Interviews!) ----
+        print_step("QDPX-Export", "Interviews", phase="output")
+        if profile.company_name:
+            qdpx_target = ctx.company_qdpx_path(profile.company_name, "interviews.qdpx")
+        else:
+            qdpx_target = ctx.qdpx_file
+        qdpx_target.parent.mkdir(parents=True, exist_ok=True)
+        generate_qdpx(iv_result, qdpx_target)
+        print_success(f"QDPX: {qdpx_target}")
+
+    # ---- Zusammenfassung ----
+    step_summary = ctx.db.get_step_summary()
+    if step_summary:
+        console.print("\n[bold]Pipeline-Status:[/bold]")
+        for s, counts in sorted(step_summary.items()):
+            parts = [f"{v} {k}" for k, v in counts.items()]
+            console.print(f"  {s}: {', '.join(parts)}")
+
+    ctx.mark_completed()
+    print_step("Fertig!", str(ctx.run_dir), phase="output")
+    if qdpx_target:
+        console.print(f"  [dim]QDPX (Interviews):[/dim] {qdpx_target}")
+    console.print(f"  [dim]Annotierte PDFs:[/dim]   {ctx.annotated_dir}")
 
 
 # ---------------------------------------------------------------------------
@@ -1104,6 +1372,30 @@ def build_parser() -> argparse.ArgumentParser:
     p_tri.add_argument("--run-dir", default=None,
                        help="Spezifischer Run, default=letzter")
     p_tri.set_defaults(func=cmd_triangulate)
+
+    # --- testrun ---------------------------------------------------------
+    p_test = subs.add_parser(
+        "testrun",
+        help="Vordefinierte Testruns (boe, company, plans)",
+    )
+    p_test.add_argument(
+        "profile", nargs="?", default=None,
+        choices=["boe", "company", "plans"],
+        help="Testrun-Profil (leer = interaktive Auswahl)",
+    )
+    p_test.add_argument(
+        "--recipe", type=str, default=None,
+        help="Analyse-Methode ueberschreiben (sonst interaktiv)",
+    )
+    p_test.add_argument(
+        "--codebase", type=str, default=None,
+        help="Codebook aus CODEBASES_DIR",
+    )
+    p_test.add_argument(
+        "--resume", action="store_true",
+        help="Letzten unterbrochenen Run fortsetzen",
+    )
+    p_test.set_defaults(func=cmd_testrun)
 
     # --- resume ----------------------------------------------------------
     p_r = subs.add_parser("resume", help="Letzten unterbrochenen Run fortsetzen")
