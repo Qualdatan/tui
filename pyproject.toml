@@ -1,0 +1,65 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qualdatan-tui"
+version = "0.1.0"
+description = "Terminal-GUI for Qualdatan: Typer/Rich CLI on top of qualdatan-core and qualdatan-plugins."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "AGPL-3.0-only"
+authors = [
+    { name = "Friedrich Schroedter" },
+]
+keywords = ["qualitative-analysis", "cli", "tui", "typer", "rich"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Environment :: Console",
+    "Topic :: Scientific/Engineering",
+    "License :: OSI Approved :: GNU Affero General Public License v3",
+]
+
+dependencies = [
+    "qualdatan-core>=0.1,<0.2",
+    "qualdatan-plugins>=0.1,<0.2",
+    "typer>=0.12",
+    "rich>=13.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "ruff>=0.4",
+]
+
+[project.scripts]
+qualdatan = "main:main"
+
+[project.urls]
+Homepage = "https://github.com/GeneralPawz/Qualdatan"
+Repository = "https://github.com/Qualdatan/tui"
+Issues = "https://github.com/Qualdatan/tui/issues"
+
+[tool.setuptools]
+py-modules = ["main"]
+
+[tool.setuptools.packages.find]
+include = ["src*"]
+exclude = ["tests*"]
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = ["-q", "--strict-markers"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = ["E501", "B008"]
