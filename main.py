@@ -27,13 +27,9 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).resolve().parent / ".env")
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-
-# ruff: noqa: E402 — sys.path.insert muss VOR allen src.*-Imports stehen,
-# damit das Package aus /mnt/d/ai/transcript importierbar ist.
-#
-# Nur leichtgewichtige Imports auf Top-Level — schwere Module (anthropic,
+# Nur leichtgewichtige Imports auf Top-Level -- schwere Module (anthropic,
 # openpyxl, pymupdf) werden erst in den jeweiligen cmd_*-Funktionen geladen.
+# Das Package ist via `pip install -e .` als `src` importierbar.
 from src.config import (
     TRANSCRIPTS_DIR, COMPANIES_DIR, DEFAULT_RECIPE,
 )
