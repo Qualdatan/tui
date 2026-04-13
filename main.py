@@ -37,7 +37,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from src.config import (
     TRANSCRIPTS_DIR, COMPANIES_DIR, DEFAULT_RECIPE,
 )
-from src.recipe import load_recipe, load_codebase, CODING_STRATEGIES
+from src.recipe import load_recipe, load_codebase, parse_codebase_yaml, CODING_STRATEGIES
 from src.run_context import (
     RunContext, create_run, find_interrupted_runs, resume_run,
 )
@@ -89,7 +89,9 @@ def load_existing_result(ctx: RunContext):
 
 
 def run_export_steps(result, ctx: RunContext,
-                     qdpx_path: Path | None = None):
+                     qdpx_path: Path | None = None,
+                     codebase_codes: dict | None = None,
+                     codebase_name: str | None = None):
     """Fuehrt Schritte 2-4 aus."""
     from src.step2_codebook import generate_codebook
     from src.step3_qdpx import generate_qdpx
@@ -106,7 +108,11 @@ def run_export_steps(result, ctx: RunContext,
         print("\n>>> Schritt 3: REFI-QDA .qdpx generieren")
         target = qdpx_path or ctx.qdpx_file
         target.parent.mkdir(parents=True, exist_ok=True)
-        generate_qdpx(result, target)
+        generate_qdpx(
+            result, target,
+            codebase_codes=codebase_codes,
+            codebase_name=codebase_name,
+        )
         ctx.mark_step_done(3)
     else:
         print("\n>>> Schritt 3: QDPX (bereits erledigt)")
@@ -140,9 +146,17 @@ def run_transcripts_pipeline(ctx: RunContext, recipe_id: str,
     recipe = _apply_coding_strategy_override(recipe, coding_strategy)
 
     codebase = ""
+    codebase_codes: dict | None = None
     if codebase_name:
         codebase = load_codebase(codebase_name)
         print(f"  Codebasis geladen: {len(codebase)} Zeichen")
+        try:
+            codebase_codes = parse_codebase_yaml(codebase_name) or None
+            if codebase_codes:
+                print(f"  Codebasis geparst: {len(codebase_codes)} Codes")
+        except Exception as e:
+            print(f"  WARN: Codebasis konnte nicht strukturiert geparst werden: {e}")
+            codebase_codes = None
 
     source_dir = transcripts_dir or TRANSCRIPTS_DIR
 
@@ -168,7 +182,11 @@ def run_transcripts_pipeline(ctx: RunContext, recipe_id: str,
                 print("\n>>> Schritt 3: REFI-QDA .qdpx generieren")
                 target = qdpx_path or ctx.qdpx_file
                 target.parent.mkdir(parents=True, exist_ok=True)
-                generate_qdpx(result, target)
+                generate_qdpx(
+                    result, target,
+                    codebase_codes=codebase_codes,
+                    codebase_name=codebase_name,
+                )
                 ctx.mark_step_done(3)
             elif step == 4:
                 print("\n>>> Schritt 4: Auswertungs-Excel generieren")
@@ -183,7 +201,21 @@ def run_transcripts_pipeline(ctx: RunContext, recipe_id: str,
             if not result.categories:
                 result.categories = recipe.categories
 
-        run_export_steps(result, ctx, qdpx_path=qdpx_path)
+        run_export_steps(
+            result, ctx, qdpx_path=qdpx_path,
+            codebase_codes=codebase_codes,
+            codebase_name=codebase_name,
+        )
+
+    # Pivot-Export (wide-format Excel fuer Pivot-Tabellen)
+    try:
+        from src.pivot_export import build_pivot_excel
+        build_pivot_excel(
+            ctx, ctx.run_dir / "pivot_results.xlsx",
+            codebase_codes=codebase_codes,
+        )
+    except Exception as e:
+        print(f"  WARN: Pivot-Export fehlgeschlagen: {e}")
 
     ctx.mark_completed()
     print("\n" + "=" * 60)
@@ -391,14 +423,25 @@ def _run_interview_flow_for_company(ctx, company, company_id: int,
               f"Ordnern — nutze {interview_dir} als Basis.")
 
     codebase = ""
+    codebase_codes: dict | None = None
     if codebase_name:
         codebase = load_codebase(codebase_name)
         print(f"  Codebasis: {len(codebase)} Zeichen")
+        try:
+            codebase_codes = parse_codebase_yaml(codebase_name) or None
+        except Exception as e:
+            print(f"  WARN: Codebasis konnte nicht geparst werden: {e}")
+            codebase_codes = None
 
     print(f"  Analyse-Methode: {recipe.id} (strategy={recipe.coding_strategy})")
 
     try:
-        result = run_analysis(recipe, ctx, interview_dir, codebase)
+        result = run_analysis(
+            recipe, ctx, interview_dir, codebase,
+            analysis_json_override=ctx.company_analysis_json(company.name),
+            prompts_dir_override=ctx.company_prompts_dir(company.name),
+            responses_dir_override=ctx.company_responses_dir(company.name),
+        )
     except Exception as e:  # pragma: no cover - defensive
         print(f"  FEHLER bei Interview-Analyse: {e}")
         return
@@ -406,7 +449,11 @@ def _run_interview_flow_for_company(ctx, company, company_id: int,
     qdpx_target = ctx.company_qdpx_path(company.name, "interviews.qdpx")
     print(f"  QDPX-Export: {qdpx_target}")
     try:
-        generate_qdpx(result, qdpx_target)
+        generate_qdpx(
+            result, qdpx_target,
+            codebase_codes=codebase_codes,
+            codebase_name=codebase_name,
+        )
     except Exception as e:  # pragma: no cover - defensive
         print(f"  FEHLER beim QDPX-Export: {e}")
 
@@ -693,6 +740,22 @@ def cmd_company(args):
             print(f"\nTriangulations-DB aktualisiert: {stats}")
         except Exception as e:
             print(f"\nWARN: Triangulations-Update fehlgeschlagen: {e}")
+
+    # 5. Pivot-Export (wide-format Excel fuer Pivot-Tabellen)
+    try:
+        from src.pivot_export import build_pivot_excel
+        cb_codes = None
+        if args.codebase:
+            try:
+                cb_codes = parse_codebase_yaml(args.codebase) or None
+            except Exception:
+                cb_codes = None
+        build_pivot_excel(
+            ctx, ctx.run_dir / "pivot_results.xlsx",
+            codebase_codes=cb_codes,
+        )
+    except Exception as e:
+        print(f"\nWARN: Pivot-Export fehlgeschlagen: {e}")
 
     ctx.mark_completed()
     print("\n" + "=" * 60)
@@ -1052,11 +1115,17 @@ def cmd_testrun(args):
     codebase_name = getattr(args, "codebase", None)
     coding_strategy = None
     codesystem = ""
+    codebase_codes: dict | None = None
     if not codebase_name:
         codebase_name, coding_strategy = pick_codebook()
     if codebase_name:
         codesystem = load_codebase(codebase_name)
         print_success(f"Codebook: {codebase_name} ({len(codesystem)} Zeichen)")
+        try:
+            codebase_codes = parse_codebase_yaml(codebase_name) or None
+        except Exception as e:
+            print_warning(f"Codebasis konnte nicht geparst werden: {e}")
+            codebase_codes = None
 
     # ---- 4. PDFs bauen ----
     print_step("Eingabedaten laden", phase="input")
@@ -1166,9 +1235,15 @@ def cmd_testrun(args):
             import dataclasses
             iv_recipe = dataclasses.replace(iv_recipe, coding_strategy=coding_strategy)
 
-        # Interviews aus COMPANIES_DIR/<company>/Interviews/ in den Run kopieren
-        iv_sample_dir = ctx.run_dir / "_interview_sample"
-        iv_sample_dir.mkdir(parents=True, exist_ok=True)
+        # Interviews aus COMPANIES_DIR/<company>/Interviews/ in den Run kopieren.
+        # Bei einem Company-Profil legen wir das Sample company-scoped ab,
+        # damit die Output-Struktur sauber bleibt:
+        #   <run>/<company>/_interview_sample/
+        if profile.company_name:
+            iv_sample_dir = ctx.company_interview_sample_dir(profile.company_name)
+        else:
+            iv_sample_dir = ctx.run_dir / "_interview_sample"
+            iv_sample_dir.mkdir(parents=True, exist_ok=True)
         company_iv_dir = COMPANIES_DIR / (profile.company_name or "") / "Interviews"
         missing_iv = []
         for name in profile.selected_interviews:
@@ -1182,7 +1257,21 @@ def cmd_testrun(args):
         if missing_iv:
             print_warning(f"Interviews nicht gefunden: {', '.join(missing_iv)}")
 
-        iv_result = run_analysis(iv_recipe, ctx, iv_sample_dir, codesystem)
+        # Company-scoped Output-Pfade fuer Interview-Analyse
+        analysis_json_override = None
+        prompts_dir_override = None
+        responses_dir_override = None
+        if profile.company_name:
+            analysis_json_override = ctx.company_analysis_json(profile.company_name)
+            prompts_dir_override = ctx.company_prompts_dir(profile.company_name)
+            responses_dir_override = ctx.company_responses_dir(profile.company_name)
+
+        iv_result = run_analysis(
+            iv_recipe, ctx, iv_sample_dir, codesystem,
+            analysis_json_override=analysis_json_override,
+            prompts_dir_override=prompts_dir_override,
+            responses_dir_override=responses_dir_override,
+        )
 
         # ---- 12. QDPX-Export (nur Interviews!) ----
         print_step("QDPX-Export", "Interviews", phase="output")
@@ -1191,7 +1280,11 @@ def cmd_testrun(args):
         else:
             qdpx_target = ctx.qdpx_file
         qdpx_target.parent.mkdir(parents=True, exist_ok=True)
-        generate_qdpx(iv_result, qdpx_target)
+        generate_qdpx(
+            iv_result, qdpx_target,
+            codebase_codes=codebase_codes,
+            codebase_name=codebase_name,
+        )
         print_success(f"QDPX: {qdpx_target}")
 
     # ---- Zusammenfassung ----
@@ -1201,6 +1294,16 @@ def cmd_testrun(args):
         for s, counts in sorted(step_summary.items()):
             parts = [f"{v} {k}" for k, v in counts.items()]
             console.print(f"  {s}: {', '.join(parts)}")
+
+    # Pivot-Export (wide-format Excel mit allen Codings)
+    try:
+        from src.pivot_export import build_pivot_excel
+        build_pivot_excel(
+            ctx, ctx.run_dir / "pivot_results.xlsx",
+            codebase_codes=codebase_codes,
+        )
+    except Exception as e:
+        print_warning(f"Pivot-Export fehlgeschlagen: {e}")
 
     ctx.mark_completed()
     print_step("Fertig!", str(ctx.run_dir), phase="output")
