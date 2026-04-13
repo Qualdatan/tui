@@ -23,5 +23,6 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+      - run: pip install git+https://github.com/Qualdatan/core.git git+https://github.com/Qualdatan/plugins.git
       - run: pip install -e ".[docs]"
       - run: mkdocs gh-deploy --force --no-history
