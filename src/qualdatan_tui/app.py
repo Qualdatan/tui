@@ -855,7 +855,7 @@ def cmd_curate(args):
       5. CLI gibt Stats + naechste Schritte aus.
     """
     from qualdatan_core.layouts import scan_company, list_companies
-    from src.codebook_curation import bootstrap_codebook
+    from qualdatan_core.curation.bootstrap import bootstrap_codebook
     from qualdatan_core.steps.step1_analyze import run_analysis
 
     # 1. Company auswaehlen
