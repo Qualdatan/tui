@@ -364,7 +364,7 @@ def cmd_transcripts(args):
 def cmd_documents(args):
     """PDF-/Dokument-Analyse (delegiert an pdf_coder.run_pipeline)."""
     with spinner("Pipeline-Module laden...", phase="scan"):
-        from src.pdf_coder import run_pipeline as run_pdf_pipeline
+        from qualdatan_core.pdf_coder import run_pipeline as run_pdf_pipeline
 
     recipe_id = args.recipe or DEFAULT_DOCUMENTS_RECIPE
     qdpx_path = Path(args.qdpx) if getattr(args, "qdpx", None) else None
@@ -476,7 +476,7 @@ def _run_pdf_flow_for_source(ctx, company, source_path: Path, source_label: str,
     ``company_id``/``project_id``/``source_kind`` wird direkt nach dem
     Registrieren der PDFs in der DB gesetzt.
     """
-    from src import pdf_coder as _pdf_coder_module
+    from qualdatan_core import pdf_coder as _pdf_coder_module
     from qualdatan_core.pdf.scanner import scan_projects, filter_pdfs, build_manifest
 
     recipe_id = args.recipe_documents or DEFAULT_DOCUMENTS_RECIPE
@@ -1002,7 +1002,7 @@ def cmd_curate(args):
 
 def _run_curate_documents(ctx, company, sample_files: list[Path], recipe) -> None:
     """Mini-Pipeline: nur Extraktion + Coding fuer ein PDF-Sample."""
-    from src import pdf_coder as _pdf_coder_module
+    from qualdatan_core import pdf_coder as _pdf_coder_module
 
     # 1. In der DB registrieren
     pdf_ids: dict[str, int] = {}
@@ -1078,7 +1078,7 @@ def cmd_testrun(args):
     from qualdatan_tui.console import _pick, pick_recipe, pick_recipe_pair, pick_codebook
 
     with spinner("Pipeline-Module laden...", phase="scan"):
-        from src import pdf_coder as _pdf_coder_module
+        from qualdatan_core import pdf_coder as _pdf_coder_module
         from qualdatan_core.pdf.scanner import build_manifest, save_manifest, print_manifest_summary
         from qualdatan_core.coding.classifier import split_by_type
 
