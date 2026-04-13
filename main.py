@@ -586,11 +586,8 @@ def _run_pdf_flow_for_source(ctx, company, source_path: Path, source_label: str,
         except Exception as e:
             print(f"  WARN: Visual-Pipeline fehlgeschlagen: {e}")
 
-    # Annotation in den company-spezifischen Ordner umleiten.
-    # Trick: run_annotation nutzt ctx.annotated_dir / ctx.annotated_path_for.
-    # Wir koennen diese per Monkey-Patch auf die Company-Variante biegen.
-    # (mapping_dir wird nicht mehr gepatcht — der Annotator schreibt seit
-    # der Single-Color-Simplification keine codes.{json,md} mehr.)
+    # Annotation in den company-spezifischen Ordner umleiten per Monkey-Patch
+    # auf RunContext.annotated_dir / annotated_path_for.
     original_annotated_dir = RunContext.annotated_dir
     original_annotated_path_for = RunContext.annotated_path_for
     try:
@@ -1181,9 +1178,7 @@ def cmd_testrun(args):
     pdf_results = []
     visual_qdpx_results = []
     recipe = load_recipe(recipe_id)
-    if coding_strategy:
-        import dataclasses
-        recipe = dataclasses.replace(recipe, coding_strategy=coding_strategy)
+    recipe = _apply_coding_strategy_override(recipe, coding_strategy)
 
     # ---- 8. Text-Pipeline ----
     if text_pdfs:
@@ -1217,7 +1212,6 @@ def cmd_testrun(args):
         from src.step1_analyze import run_analysis
         from src.step3_qdpx import generate_qdpx
         from src.config import COMPANIES_DIR
-        import shutil
 
         print_step(
             "Interview-Analyse",
@@ -1227,31 +1221,18 @@ def cmd_testrun(args):
 
         iv_recipe_id = recipe_interviews_id or profile.recipe_interviews or "mayring"
         iv_recipe = load_recipe(iv_recipe_id)
-        if coding_strategy:
-            import dataclasses
-            iv_recipe = dataclasses.replace(iv_recipe, coding_strategy=coding_strategy)
+        iv_recipe = _apply_coding_strategy_override(iv_recipe, coding_strategy)
 
-        # Interviews aus COMPANIES_DIR/<company>/Interviews/ in den Run kopieren.
-        # Bei einem Company-Profil legen wir das Sample company-scoped ab,
-        # damit die Output-Struktur sauber bleibt:
-        #   <run>/<company>/_interview_sample/
         if profile.company_name:
             iv_sample_dir = ctx.company_interview_sample_dir(profile.company_name)
         else:
             iv_sample_dir = ctx.run_dir / "_interview_sample"
-            iv_sample_dir.mkdir(parents=True, exist_ok=True)
         company_iv_dir = COMPANIES_DIR / (profile.company_name or "") / "Interviews"
-        missing_iv = []
-        for name in profile.selected_interviews:
-            src_path = company_iv_dir / name
-            if not src_path.exists():
-                missing_iv.append(name)
-                continue
-            dst = iv_sample_dir / name
-            if not dst.exists():
-                shutil.copy2(src_path, dst)
+        iv_sources = [company_iv_dir / n for n in profile.selected_interviews]
+        missing_iv = [p.name for p in iv_sources if not p.exists()]
         if missing_iv:
             print_warning(f"Interviews nicht gefunden: {', '.join(missing_iv)}")
+        _copy_sample_to_dir([p for p in iv_sources if p.exists()], iv_sample_dir)
 
         # Company-scoped Output-Pfade fuer Interview-Analyse
         analysis_json_override = None
