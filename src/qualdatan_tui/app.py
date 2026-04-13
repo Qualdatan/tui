@@ -1162,6 +1162,53 @@ def cmd_resume(args):
 
 
 # ---------------------------------------------------------------------------
+# cmd_migrate_legacy — Legacy output/run_* in die App-DB importieren
+# ---------------------------------------------------------------------------
+
+def cmd_migrate_legacy(args):
+    """Importiert Legacy-``output/run_*``-Verzeichnisse in die globale App-DB.
+
+    Liest jede gefundene ``pipeline.db`` read-only und legt pro Company je
+    einen Run in der App-DB an. Idempotent: bereits importierte Runs werden
+    uebersprungen.
+    """
+    import os
+    from qualdatan_core.app_db import open_app_db
+    from qualdatan_core.app_db.migrate import migrate_legacy_output
+
+    if args.app_db:
+        os.environ["QUALDATAN_APP_DB"] = str(Path(args.app_db).expanduser())
+
+    output_root = Path(args.output_root).expanduser().resolve()
+    if not output_root.exists():
+        print_error(f"output-Verzeichnis nicht gefunden: {output_root}")
+        sys.exit(1)
+
+    db_path_arg = args.app_db if args.app_db else None
+    with open_app_db(db_path_arg) as db:
+        print(f"App-DB: {db.path}")
+        print(f"Scan:   {output_root}")
+        if args.dry_run:
+            print("Modus:  DRY-RUN (keine Writes)")
+        report = migrate_legacy_output(db, output_root, dry_run=args.dry_run)
+
+    print("")
+    print("Migrations-Report:")
+    print(f"  run_dirs_scanned:   {report.run_dirs_scanned}")
+    print(f"  run_dirs_migrated:  {report.run_dirs_migrated}")
+    print(f"  run_dirs_skipped:   {report.run_dirs_skipped}")
+    print(f"  projects_created:   {report.projects_created}")
+    print(f"  codings_imported:   {report.codings_imported}")
+    print(f"  materials_imported: {report.materials_imported}")
+    if report.warnings:
+        print(f"  warnings ({len(report.warnings)}):")
+        for w in report.warnings[:20]:
+            print(f"    - {w}")
+        if len(report.warnings) > 20:
+            print(f"    ... (+{len(report.warnings) - 20} weitere)")
+
+
+# ---------------------------------------------------------------------------
 # cmd_testrun — vordefinierte Testruns aus src/testruns.py
 # ---------------------------------------------------------------------------
 
@@ -1600,6 +1647,25 @@ def build_parser() -> argparse.ArgumentParser:
     # --- resume ----------------------------------------------------------
     p_r = subs.add_parser("resume", help="Letzten unterbrochenen Run fortsetzen")
     p_r.set_defaults(func=cmd_resume)
+
+    # --- migrate-legacy --------------------------------------------------
+    p_mig = subs.add_parser(
+        "migrate-legacy",
+        help="Legacy output/run_* Verzeichnisse in die App-DB importieren",
+    )
+    p_mig.add_argument(
+        "output_root", nargs="?", default="./output",
+        help="Verzeichnis mit run_* Unterordnern (Default: ./output)",
+    )
+    p_mig.add_argument(
+        "--dry-run", action="store_true",
+        help="Nur scannen, keine Writes",
+    )
+    p_mig.add_argument(
+        "--app-db", default=None,
+        help="Pfad zur App-DB (setzt QUALDATAN_APP_DB fuer diesen Run)",
+    )
+    p_mig.set_defaults(func=cmd_migrate_legacy)
 
     # --- plugins ---------------------------------------------------------
     _add_plugins_parser(subs)
