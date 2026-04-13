@@ -1047,6 +1047,106 @@ def _run_curate_documents(ctx, company, sample_files: list[Path], recipe) -> Non
 # cmd_resume
 # ---------------------------------------------------------------------------
 
+def _get_manager():
+    try:
+        from qualdatan_plugins import PluginManager
+    except ImportError as exc:
+        raise SystemExit(
+            "qualdatan-plugins ist nicht installiert. "
+            "`uv sync` im Umbrella-Workspace oder `pip install qualdatan-plugins`."
+        ) from exc
+    return PluginManager()
+
+
+def _print_bundle_row(b) -> None:
+    flag = "git" if b.source == "git" else b.source
+    print(f"  {b.id:<30} {b.version:<10} [{flag}] {b.install_path}")
+
+
+def cmd_plugins_list(args):
+    """Listet alle installierten Bundles."""
+    with _get_manager() as mgr:
+        bundles = mgr.list_installed()
+    if not bundles:
+        print("Keine Bundles installiert.")
+        return
+    print(f"{len(bundles)} Bundle(s) installiert:")
+    for b in bundles:
+        _print_bundle_row(b)
+
+
+def cmd_plugins_install(args):
+    """Installiert ein Bundle aus Pfad oder Git-URL."""
+    from pathlib import Path
+    src = args.source
+    with _get_manager() as mgr:
+        if src.startswith(("http://", "https://", "git@")):
+            if not args.version:
+                raise SystemExit("--version ist bei Git-Install erforderlich")
+            result = mgr.install_from_git(src, args.version)
+        else:
+            result = mgr.install_from_path(Path(src))
+    b = result.bundle
+    print(f"Installiert: {b.manifest.ref()} ({b.source})")
+    for w in result.verification.warnings:
+        print(f"  WARN: {w}")
+
+
+def cmd_plugins_uninstall(args):
+    with _get_manager() as mgr:
+        mgr.uninstall(args.bundle_id, args.version)
+    print(f"Entfernt: {args.bundle_id}")
+
+
+def cmd_plugins_activate(args):
+    with _get_manager() as mgr:
+        ib = mgr.activate(args.bundle_id, project_id=args.project, version=args.version)
+    scope = f"Projekt '{args.project}'" if args.project else "global"
+    print(f"Aktiviert: {ib.manifest.ref()} fuer {scope}")
+
+
+def cmd_plugins_deactivate(args):
+    with _get_manager() as mgr:
+        mgr.deactivate(args.bundle_id, project_id=args.project)
+    scope = f"Projekt '{args.project}'" if args.project else "global"
+    print(f"Deaktiviert: {args.bundle_id} ({scope})")
+
+
+def cmd_plugins_active(args):
+    with _get_manager() as mgr:
+        bundles = mgr.list_active(args.project)
+    if not bundles:
+        print("Keine aktiven Bundles.")
+        return
+    for b in bundles:
+        _print_bundle_row(b)
+
+
+def cmd_plugins_verify(args):
+    with _get_manager() as mgr:
+        report = mgr.verify(args.bundle_id, args.version)
+    status = "OK" if report.ok else "FAIL"
+    print(f"{status}  {args.bundle_id}")
+    for e in report.errors:
+        print(f"  ERROR: {e}")
+    for w in report.warnings:
+        print(f"  WARN:  {w}")
+    if not report.ok:
+        raise SystemExit(1)
+
+
+def cmd_plugins_discover(args):
+    from pathlib import Path
+    with _get_manager() as mgr:
+        found = mgr.discover_local(Path(args.path))
+    if not found:
+        print("Keine Bundles gefunden.")
+        return
+    print(f"{len(found)} Bundle(s) gefunden:")
+    for p in found:
+        print(f"  {p}")
+
+
 def cmd_resume(args):
     """Setzt den letzten unterbrochenen Run fort (transcripts-Flow)."""
     interrupted = find_interrupted_runs()
@@ -1501,7 +1601,60 @@ def build_parser() -> argparse.ArgumentParser:
     p_r = subs.add_parser("resume", help="Letzten unterbrochenen Run fortsetzen")
     p_r.set_defaults(func=cmd_resume)
 
+    # --- plugins ---------------------------------------------------------
+    _add_plugins_parser(subs)
+
     return parser
+
+
+def _add_plugins_parser(subs) -> None:
+    """Fuegt den `plugins`-Subcommand inkl. Unter-Commands hinzu."""
+
+    p = subs.add_parser(
+        "plugins",
+        help="Community-Bundles verwalten (install/list/activate/...)",
+    )
+    psubs = p.add_subparsers(dest="plugins_command", required=True)
+
+    p_list = psubs.add_parser("list", help="Installierte Bundles auflisten")
+    p_list.set_defaults(func=cmd_plugins_list)
+
+    p_install = psubs.add_parser("install", help="Bundle aus Pfad oder Git-URL installieren")
+    p_install.add_argument("source", help="Lokaler Pfad oder https://<repo>")
+    p_install.add_argument(
+        "--version", default=None,
+        help="Version (Tag) bei Git-Install, z.B. '0.3.0'",
+    )
+    p_install.set_defaults(func=cmd_plugins_install)
+
+    p_un = psubs.add_parser("uninstall", help="Bundle entfernen")
+    p_un.add_argument("bundle_id", help="namespace/name")
+    p_un.add_argument("--version", default=None)
+    p_un.set_defaults(func=cmd_plugins_uninstall)
+
+    p_act = psubs.add_parser("activate", help="Bundle fuer ein Projekt aktivieren")
+    p_act.add_argument("bundle_id")
+    p_act.add_argument("--project", default="", help="Projekt-Id (leer = global)")
+    p_act.add_argument("--version", default=None)
+    p_act.set_defaults(func=cmd_plugins_activate)
+
+    p_deact = psubs.add_parser("deactivate", help="Bundle fuer ein Projekt deaktivieren")
+    p_deact.add_argument("bundle_id")
+    p_deact.add_argument("--project", default="")
+    p_deact.set_defaults(func=cmd_plugins_deactivate)
+
+    p_active = psubs.add_parser("active", help="Aktive Bundles fuer ein Projekt zeigen")
+    p_active.add_argument("--project", default="")
+    p_active.set_defaults(func=cmd_plugins_active)
+
+    p_ver = psubs.add_parser("verify", help="Manifest + Pfade eines Bundles pruefen")
+    p_ver.add_argument("bundle_id")
+    p_ver.add_argument("--version", default=None)
+    p_ver.set_defaults(func=cmd_plugins_verify)
+
+    p_disc = psubs.add_parser("discover", help="Bundles unter einem lokalen Pfad finden")
+    p_disc.add_argument("path", help="Wurzel-Verzeichnis")
+    p_disc.set_defaults(func=cmd_plugins_discover)
 
 
 def main():
