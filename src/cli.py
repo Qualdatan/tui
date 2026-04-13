@@ -12,9 +12,9 @@ from rich.prompt import Prompt, Confirm
 from rich.text import Text
 from rich import box
 
-from .config import TRANSCRIPTS_DIR, CODEBASES_DIR, DEFAULT_RECIPE
-from .recipe import list_recipes, list_codebases
-from .run_context import find_interrupted_runs
+from qualdatan_core.config import TRANSCRIPTS_DIR, CODEBASES_DIR, DEFAULT_RECIPE
+from qualdatan_core.recipe import list_recipes, list_codebases
+from qualdatan_core.run_context import find_interrupted_runs
 
 # Shared console instance – importable by other modules
 console = Console()

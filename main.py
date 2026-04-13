@@ -30,18 +30,30 @@ load_dotenv(Path(__file__).resolve().parent / ".env")
 # Nur leichtgewichtige Imports auf Top-Level -- schwere Module (anthropic,
 # openpyxl, pymupdf) werden erst in den jeweiligen cmd_*-Funktionen geladen.
 # Das Package ist via `pip install -e .` als `src` importierbar.
-from src.config import (
+from qualdatan_core.config import (
     TRANSCRIPTS_DIR, COMPANIES_DIR, DEFAULT_RECIPE,
 )
-from src.recipe import load_recipe, load_codebase, parse_codebase_yaml, CODING_STRATEGIES
-from src.run_context import (
+from qualdatan_core.recipe import load_recipe, load_codebase, parse_codebase_yaml, CODING_STRATEGIES
+from qualdatan_core.run_context import (
     RunContext, create_run, find_interrupted_runs, resume_run,
 )
 from src.cli import (
     console, print_header, print_step, print_success, print_warning,
     print_error, print_summary, spinner,
 )
-from src.testruns import list_profiles, get_profile, build_pdf_list as build_testrun_pdfs
+# testruns is research-specific and not (yet) shipped as a core module. Phase B
+# moves it into the bim-basic bundle; until then the cmd_testrun handler imports
+# it lazily from `src.testruns` if available.
+try:  # pragma: no cover - compat shim
+    from src.testruns import (  # type: ignore[import-not-found]
+        list_profiles,
+        get_profile,
+        build_pdf_list as build_testrun_pdfs,
+    )
+except ImportError:  # pragma: no cover
+    list_profiles = None  # type: ignore[assignment]
+    get_profile = None  # type: ignore[assignment]
+    build_testrun_pdfs = None  # type: ignore[assignment]
 
 
 # ---------------------------------------------------------------------------
@@ -71,8 +83,8 @@ def _apply_coding_strategy_override(recipe, coding_strategy: str | None):
 
 def load_existing_result(ctx: RunContext):
     """Laedt vorhandene Ergebnisse und liest Dokument-Texte nach."""
-    from src.models import AnalysisResult
-    from src.step1_analyze import read_transcripts
+    from qualdatan_core.models import AnalysisResult
+    from qualdatan_core.step1_analyze import read_transcripts
 
     if not ctx.analysis_json.exists():
         print(f"FEHLER: {ctx.analysis_json} nicht gefunden.")
@@ -89,9 +101,9 @@ def run_export_steps(result, ctx: RunContext,
                      codebase_codes: dict | None = None,
                      codebase_name: str | None = None):
     """Fuehrt Schritte 2-4 aus."""
-    from src.step2_codebook import generate_codebook
-    from src.step3_qdpx import generate_qdpx
-    from src.step4_evaluation import generate_evaluation
+    from qualdatan_core.step2_codebook import generate_codebook
+    from qualdatan_core.step3_qdpx import generate_qdpx
+    from qualdatan_core.step4_evaluation import generate_evaluation
 
     if not ctx.is_step_done(2):
         print("\n>>> Schritt 2: Codebook generieren")
@@ -133,10 +145,10 @@ def run_transcripts_pipeline(ctx: RunContext, recipe_id: str,
                              transcripts_dir: Path | None = None,
                              qdpx_path: Path | None = None):
     """Fuehrt die klassische Interview-Pipeline mit einem RunContext aus."""
-    from src.step1_analyze import run_analysis
-    from src.step2_codebook import generate_codebook
-    from src.step3_qdpx import generate_qdpx
-    from src.step4_evaluation import generate_evaluation
+    from qualdatan_core.step1_analyze import run_analysis
+    from qualdatan_core.step2_codebook import generate_codebook
+    from qualdatan_core.step3_qdpx import generate_qdpx
+    from qualdatan_core.step4_evaluation import generate_evaluation
 
     recipe = load_recipe(recipe_id)
     recipe = _apply_coding_strategy_override(recipe, coding_strategy)
@@ -397,8 +409,8 @@ def _run_interview_flow_for_company(ctx, company, company_id: int,
     unterstuetzt das bereits. Das QDPX wird unter
     ``<run>/<company>/qda/interviews.qdpx`` abgelegt.
     """
-    from src.step1_analyze import run_analysis
-    from src.step3_qdpx import generate_qdpx
+    from qualdatan_core.step1_analyze import run_analysis
+    from qualdatan_core.step3_qdpx import generate_qdpx
 
     if not company.interviews:
         return
@@ -465,7 +477,7 @@ def _run_pdf_flow_for_source(ctx, company, source_path: Path, source_label: str,
     Registrieren der PDFs in der DB gesetzt.
     """
     from src import pdf_coder as _pdf_coder_module
-    from src.pdf_scanner import scan_projects, filter_pdfs, build_manifest
+    from qualdatan_core.pdf_scanner import scan_projects, filter_pdfs, build_manifest
 
     recipe_id = args.recipe_documents or DEFAULT_DOCUMENTS_RECIPE
 
@@ -559,7 +571,7 @@ def _run_pdf_flow_for_source(ctx, company, source_path: Path, source_label: str,
     text_pdfs = pdfs
     visual_pdfs = []
     if classifications:
-        from src.pdf_classifier import split_by_type
+        from qualdatan_core.pdf_classifier import split_by_type
         groups = split_by_type(pdfs, classifications)
         text_pdfs = groups.get("text", []) + groups.get("mixed", [])
         visual_pdfs = groups.get("plan", []) + groups.get("photo", [])
@@ -844,7 +856,7 @@ def cmd_curate(args):
     """
     from src.company_scanner import scan_company, list_companies
     from src.codebook_curation import bootstrap_codebook
-    from src.step1_analyze import run_analysis
+    from qualdatan_core.step1_analyze import run_analysis
 
     # 1. Company auswaehlen
     if args.company:
@@ -1059,8 +1071,8 @@ def cmd_testrun(args):
 
     with spinner("Pipeline-Module laden...", phase="scan"):
         from src import pdf_coder as _pdf_coder_module
-        from src.pdf_scanner import build_manifest, save_manifest, print_manifest_summary
-        from src.pdf_classifier import split_by_type
+        from qualdatan_core.pdf_scanner import build_manifest, save_manifest, print_manifest_summary
+        from qualdatan_core.pdf_classifier import split_by_type
 
     # ---- 1. Profil waehlen ----
     if args.profile:
@@ -1209,9 +1221,9 @@ def cmd_testrun(args):
     #          QDPX-Export ist ausschliesslich fuer Interviews.
     qdpx_target = None
     if profile.selected_interviews:
-        from src.step1_analyze import run_analysis
-        from src.step3_qdpx import generate_qdpx
-        from src.config import COMPANIES_DIR
+        from qualdatan_core.step1_analyze import run_analysis
+        from qualdatan_core.step3_qdpx import generate_qdpx
+        from qualdatan_core.config import COMPANIES_DIR
 
         print_step(
             "Interview-Analyse",

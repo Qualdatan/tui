@@ -1,0 +1,47 @@
+Metadata-Version: 2.4
+Name: qualdatan-tui
+Version: 0.1.0
+Summary: Terminal-GUI for Qualdatan: Typer/Rich CLI on top of qualdatan-core and qualdatan-plugins.
+Author: Friedrich Schroedter
+License-Expression: AGPL-3.0-only
+Project-URL: Homepage, https://github.com/GeneralPawz/Qualdatan
+Project-URL: Repository, https://github.com/Qualdatan/tui
+Project-URL: Issues, https://github.com/Qualdatan/tui/issues
+Keywords: qualitative-analysis,cli,tui,typer,rich
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Environment :: Console
+Classifier: Topic :: Scientific/Engineering
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: qualdatan-core<0.2,>=0.1
+Requires-Dist: qualdatan-plugins<0.2,>=0.1
+Requires-Dist: typer>=0.12
+Requires-Dist: rich>=13.0
+Provides-Extra: dev
+Requires-Dist: pytest>=7.0; extra == "dev"
+Requires-Dist: ruff>=0.4; extra == "dev"
+Dynamic: license-file
+
+# qualdatan-tui
+
+Terminal-GUI fuer [Qualdatan](https://github.com/GeneralPawz/Qualdatan).
+Typer-basierte CLI mit Rich-Output, die [qualdatan-core](https://github.com/Qualdatan/core)
+und [qualdatan-plugins](https://github.com/Qualdatan/plugins) orchestriert.
+
+**Status**: frueh. Phase 1 hat `main.py` und die Console-Helpers aus dem
+Umbrella extrahiert; Phase A stellt auf `qualdatan_tui.app` / `qualdatan_tui.console`
+um und aktiviert den Entry-Point `qualdatan`.
+
+## Install
+
+```bash
+pip install qualdatan-tui
+qualdatan --help
+```
+
+## Lizenz
+
+AGPL-3.0-only — siehe [LICENSE](LICENSE).
