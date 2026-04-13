@@ -37,7 +37,7 @@ from qualdatan_core.recipe import load_recipe, load_codebase, parse_codebase_yam
 from qualdatan_core.run_context import (
     RunContext, create_run, find_interrupted_runs, resume_run,
 )
-from src.cli import (
+from qualdatan_tui.console import (
     console, print_header, print_step, print_success, print_warning,
     print_error, print_summary, spinner,
 )
@@ -237,7 +237,7 @@ def run_transcripts_pipeline(ctx: RunContext, recipe_id: str,
 
 def run_interactive():
     """Interaktiver Modus mit farbigem CLI."""
-    from src.cli import (
+    from qualdatan_tui.console import (
         _pick, pick_companies, pick_recipe, pick_recipe_pair, pick_codebook,
         check_interrupted_runs, _pick_multiple,
     )
@@ -641,7 +641,7 @@ def cmd_company(args):
     elif args.companies:
         companies = list(args.companies)
     else:
-        from src.cli import pick_companies
+        from qualdatan_tui.console import pick_companies
         companies = pick_companies()
 
     if not companies:
@@ -862,7 +862,7 @@ def cmd_curate(args):
     if args.company:
         company_name = args.company
     else:
-        from src.cli import pick_companies
+        from qualdatan_tui.console import pick_companies
         picks = pick_companies()
         if not picks:
             print("Keine Company ausgewaehlt — Abbruch.")
@@ -1067,7 +1067,7 @@ def cmd_resume(args):
 
 def cmd_testrun(args):
     """Fuehrt einen vordefinierten Testrun aus."""
-    from src.cli import _pick, pick_recipe, pick_recipe_pair, pick_codebook
+    from qualdatan_tui.console import _pick, pick_recipe, pick_recipe_pair, pick_codebook
 
     with spinner("Pipeline-Module laden...", phase="scan"):
         from src import pdf_coder as _pdf_coder_module

@@ -35,24 +35,21 @@ dev = [
 ]
 
 [project.scripts]
-qualdatan = "main:main"
+qualdatan = "qualdatan_tui.app:main"
 
 [project.urls]
 Homepage = "https://github.com/GeneralPawz/Qualdatan"
 Repository = "https://github.com/Qualdatan/tui"
 Issues = "https://github.com/Qualdatan/tui/issues"
 
-[tool.setuptools]
-py-modules = ["main"]
-
 [tool.setuptools.packages.find]
-include = ["src*"]
-exclude = ["tests*"]
+where = ["src"]
+include = ["qualdatan_tui*"]
 
 [tool.pytest.ini_options]
 minversion = "7.0"
 testpaths = ["tests"]
-pythonpath = ["."]
+pythonpath = ["src"]
 addopts = ["-q", "--strict-markers"]
 
 [tool.ruff]
