@@ -15,6 +15,12 @@ pip install qualdatan-tui
 qualdatan --help
 ```
 
+## Dokumentation
+
+- Live-Site: https://qualdatan.github.io/tui/
+- Lokaler Preview: `pip install -e ".[docs]" && mkdocs serve`
+- Docs-Policy und -Struktur: [CLAUDE.md](CLAUDE.md)
+
 ## Lizenz
 
 AGPL-3.0-only — siehe [LICENSE](LICENSE).
