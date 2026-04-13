@@ -217,7 +217,7 @@ def run_transcripts_pipeline(ctx: RunContext, recipe_id: str,
 
     # Pivot-Export (wide-format Excel fuer Pivot-Tabellen)
     try:
-        from src.pivot_export import build_pivot_excel
+        from qualdatan_core.export import build_pivot_excel
         build_pivot_excel(
             ctx, ctx.run_dir / "pivot_results.xlsx",
             codebase_codes=codebase_codes,
@@ -748,7 +748,7 @@ def cmd_company(args):
 
     # 5. Pivot-Export (wide-format Excel fuer Pivot-Tabellen)
     try:
-        from src.pivot_export import build_pivot_excel
+        from qualdatan_core.export import build_pivot_excel
         cb_codes = None
         if args.codebase:
             try:
@@ -1294,7 +1294,7 @@ def cmd_testrun(args):
 
     # Pivot-Export (wide-format Excel mit allen Codings)
     try:
-        from src.pivot_export import build_pivot_excel
+        from qualdatan_core.export import build_pivot_excel
         build_pivot_excel(
             ctx, ctx.run_dir / "pivot_results.xlsx",
             codebase_codes=codebase_codes,
